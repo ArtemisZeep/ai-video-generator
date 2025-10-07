@@ -1,0 +1,19 @@
+{
+  "openai_key": "",
+  "elevenlabs_key": "",
+  "pexels_key": "",
+  "voice_name": "Charlie",
+  "language": "ru",
+  "background_music_url": "",
+  "watermark": null,
+  "video_settings": {
+    "isVerticalFormat": true,
+    "resolution": "1080x1920",
+    "fps": 30,
+    "bitrate": "2M"
+  },
+  "audio_settings": {
+    "sample_rate": 44100,
+    "bitrate": "128k"
+  }
+}
