@@ -924,6 +924,29 @@ app.post('/api/pipeline/continue/:videoId', async (req, res) => {
   }
 });
 
+// POST /api/pipeline/render/:videoId - Создать видео сразу с этапа 5 (Shotstack рендер)
+app.post('/api/pipeline/render/:videoId', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    console.log(`🎬 Создаем видео в Shotstack для: ${videoId}`);
+    
+    const result = await videoPipelineService.renderVideo(videoId);
+    
+    res.json({
+      success: true,
+      message: 'Видео создано в Shotstack',
+      videoId: result.videoId,
+      video: result.video
+    });
+  } catch (error) {
+    console.error('❌ Ошибка создания видео:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // POST /api/pexels/search - Поиск видео в Pexels
 app.post('/api/pexels/search', async (req, res) => {
   try {

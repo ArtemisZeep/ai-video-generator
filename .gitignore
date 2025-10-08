@@ -109,3 +109,5 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+config/google-credentials.json
+config/credentials.json

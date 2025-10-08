@@ -147,38 +147,72 @@ class ShotstackService {
   }
 
   // Создание timeline для видео с аудио и сценами
-  createTimeline(scenes, audioUrl, options = {}) {
-    const totalDuration = scenes.reduce((total, scene) => total + (scene.duration || 15), 0);
-    
-    console.log(`📊 Создаем timeline: ${scenes.length} сцен, общая длительность: ${totalDuration} сек`);
-    
-    const timeline = {
-      soundtrack: audioUrl ? {
-        src: audioUrl,
-        effect: 'fadeOut'
-      } : undefined,
-      tracks: [
-        {
-          clips: []
+createTimeline(scenes, audioUrl, options = {}) {
+  const totalDuration = scenes.reduce((total, scene) => total + (scene.duration || 15), 0);
+  
+  console.log(`📊 Создаем timeline: ${scenes.length} сцен, общая длительность: ${totalDuration} сек`);
+  
+  const timeline = {
+    soundtrack: audioUrl ? {
+      src: audioUrl,
+      effect: 'fadeOut'
+    } : undefined,
+    tracks: [
+      {
+        clips: []
+      }
+    ]
+  };
+
+  let currentTime = 0;
+
+  // Добавляем каждую сцену как клип
+  scenes.forEach((sceneData, index) => {
+    const scene = sceneData.scene || sceneData; // Поддержка обеих структур
+    const selectedVideo = sceneData.selectedVideo || sceneData.video;
+    const duration = scene.duration || 15;
+
+    // Фоновое видео
+    if (selectedVideo && selectedVideo.videoUrl) {
+      timeline.tracks[0].clips.push({
+        asset: {
+          type: 'video',
+          src: selectedVideo.videoUrl,
+          trim: 0
+        },
+        start: currentTime,
+        length: duration,
+        transition: {
+          in: 'fade',
+          out: 'fade'
         }
-      ]
-    };
+      });
+    }
 
-    let currentTime = 0;
-
-    // Добавляем каждую сцену как клип
-    scenes.forEach((sceneData, index) => {
-      const scene = sceneData.scene;
-      const selectedVideo = sceneData.selectedVideo;
-      const duration = scene.duration || 15;
-
-      // Фоновое видео
-      if (selectedVideo && selectedVideo.videoUrl) {
-        timeline.tracks[0].clips.push({
+    // Текст поверх видео
+    if (scene.voiceoverText) {
+      timeline.tracks.push({
+        clips: [{
           asset: {
-            type: 'video',
-            src: selectedVideo.videoUrl,
-            trim: 0
+            type: 'text',
+            text: scene.voiceoverText,
+            font: {
+              family: 'Arial',
+              color: '#ffffff',
+              size: 48
+            },
+            background: {
+              color: '#000000',
+              borderRadius: 10,
+              padding: 20,
+              opacity: 0.7
+            },
+            alignment: {
+              horizontal: 'center',
+              vertical: 'bottom'
+            },
+            width: 1000,
+            height: 400
           },
           start: currentTime,
           length: duration,
@@ -186,46 +220,16 @@ class ShotstackService {
             in: 'fade',
             out: 'fade'
           }
-        });
-      }
+        }]
+      });
+    }
 
-      // Текст поверх видео
-      if (scene.voiceoverText) {
-        timeline.tracks.push({
-          clips: [{
-            asset: {
-              type: 'text',
-              text: scene.voiceoverText,
-              font: {
-                family: 'Arial',
-                color: '#ffffff',
-                size: 48
-              },
-              style: {
-                background: 'rgba(0,0,0,0.7)',
-                padding: '20px',
-                borderRadius: '10px'
-              },
-              position: {
-                x: 'center',
-                y: 'bottom'
-              }
-            },
-            start: currentTime,
-            length: duration,
-            transition: {
-              in: 'fade',
-              out: 'fade'
-            }
-          }]
-        });
-      }
+    currentTime += duration;
+  });
 
-      currentTime += duration;
-    });
+  return timeline;
+}
 
-    return timeline;
-  }
 
   // Полный процесс создания видео
   async createVideo(scenes, audioUrl, options = {}) {

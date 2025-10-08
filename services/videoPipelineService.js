@@ -1,18 +1,22 @@
 const PerplexityService = require('./perplexityService');
 const ElevenLabsService = require('./elevenLabsService');
+const FallbackTtsService = require('./fallbackTtsService');
 const PexelsService = require('./pexelsService');
 const ShotstackService = require('./shotstackService');
 const DataService = require('./dataService');
 const fs = require('fs-extra');
 const path = require('path');
+const BackblazeService = require('./backblazeService');
 
 class VideoPipelineService {
   constructor() {
     this.perplexityService = new PerplexityService();
     this.elevenLabsService = new ElevenLabsService();
+    this.fallbackTtsService = new FallbackTtsService();
     this.pexelsService = new PexelsService();
     this.shotstackService = new ShotstackService();
     this.dataService = new DataService();
+    this.backblazeService = new BackblazeService();
   }
 
   // Главный метод пайплайна
@@ -133,17 +137,29 @@ class VideoPipelineService {
 console.log(`\n🎵 ЭТАП 4: Генерация аудио через ElevenLabs`);
 const fullVoiceoverText = script.scenes.map(scene => scene.voiceoverText).join(' ');
 
-let audioResult;
-try {
-  audioResult = await this.elevenLabsService.generateAndSaveVoiceover(
-    fullVoiceoverText,
-    videoId,
-    language
-  );
-  console.log(`✅ Аудио создано: ${audioResult.filename}`);
-} catch (error) {
-  throw new Error(`Ошибка генерации аудио: ${error.message}`);
-}
+      let audioResult;
+      try {
+        audioResult = await this.elevenLabsService.generateAndSaveVoiceover(
+          fullVoiceoverText,
+          videoId,
+          language
+        );
+        console.log(`✅ Аудио создано через ElevenLabs: ${audioResult.filename}`);
+      } catch (error) {
+        console.log(`⚠️ ElevenLabs недоступен: ${error.message}`);
+        console.log(`🔄 Пробуем системный TTS...`);
+        
+        try {
+          audioResult = await this.fallbackTtsService.generateAndSaveVoiceover(
+            fullVoiceoverText,
+            videoId,
+            language
+          );
+          console.log(`✅ Аудио создано через системный TTS: ${audioResult.filename}`);
+        } catch (fallbackError) {
+          throw new Error(`Ошибка генерации аудио (ElevenLabs + системный TTS): ${fallbackError.message}`);
+        }
+      }
 
 // Сохраняем результат этапа 4
 videoData.audio = {
@@ -169,16 +185,12 @@ console.log(`💾 Результат этапа 4 сохранен в базу �
         }
       }));
 
-      // Создаем публичный URL для аудио файла
-      const audioFileName = path.basename(audioResult.filePath);
-      const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-      const audioPublicUrl = `${baseUrl}/audio/${audioFileName}`;
-      
-      console.log(`🔗 Публичный URL аудио: ${audioPublicUrl}`);
+      // Передаем локальный путь - Shotstack сам загрузит через Ingest API
+      console.log(`🔗 Локальный путь аудио: ${audioResult.filePath}`);
       
       const shotstackResult = await this.shotstackService.createVideo(
         scenesForShotstack,
-        audioPublicUrl, // Публичный URL аудио файла
+        audioResult.filePath, // Локальный путь - Shotstack загрузит сам
         options
       );
 
@@ -433,18 +445,14 @@ console.log(`💾 Результат этапа 4 сохранен в базу �
             }
           }));
 
-          // Создаем публичный URL для аудио файла
-          const audioFileName = path.basename(videoData.audio.filePath);
-          const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-          const audioPublicUrl = `${baseUrl}/audio/${audioFileName}`;
-          
-          console.log(`🔗 Публичный URL аудио: ${audioPublicUrl}`);
-          
-          const shotstackResult = await this.shotstackService.createVideo(
-            scenesForShotstack,
-            audioPublicUrl, // Публичный URL аудио файла
-            {}
-          );
+        // Передаем локальный путь - Shotstack сам загрузит через Ingest API
+        console.log(`🔗 Локальный путь аудио: ${videoData.audio.filePath}`);
+        
+        const shotstackResult = await this.shotstackService.createVideo(
+          scenesForShotstack,
+          videoData.audio.filePath, // Локальный путь - Shotstack загрузит сам
+          {}
+        );
 
           if (!shotstackResult.success) {
             console.log(`⚠️ Ошибка Shotstack: ${shotstackResult.error}`);
@@ -556,6 +564,116 @@ console.log(`💾 Результат этапа 4 сохранен в базу �
         success: false,
         error: error.message
       };
+    }
+  }
+
+  // Создание видео сразу с этапа 5 (Shotstack рендер)
+  async renderVideo(videoId) {
+    try {
+      console.log(`🎬 ЭТАП 5: Создание видео в Shotstack для ${videoId}`);
+      
+      // Загружаем данные видео
+      const videoData = await this.dataService.getVideoById(videoId);
+      if (!videoData) {
+        throw new Error(`Видео с ID ${videoId} не найдено`);
+      }
+      
+      console.log(`📋 Данные видео загружены:`, {
+        hasScript: !!videoData.script,
+        hasSelectedVideos: !!videoData.selectedVideos,
+        hasAudio: !!videoData.audio,
+        audioPath: videoData.audio?.filePath
+      });
+      
+      // Проверяем наличие всех необходимых данных
+      if (!videoData.script) {
+        throw new Error('Скрипт не найден. Сначала выполните генерацию скрипта.');
+      }
+      
+      if (!videoData.selectedVideos || videoData.selectedVideos.length === 0) {
+        throw new Error('Выбранные видео не найдены. Сначала выполните поиск и выбор видео.');
+      }
+      
+      if (!videoData.audio || !videoData.audio.filePath) {
+        throw new Error('Аудио файл не найден. Сначала выполните генерацию аудио.');
+      }
+      
+      // Подготавливаем сцены для Shotstack
+      const scenesForShotstack = videoData.selectedVideos.map((sceneData, index) => ({
+        duration: sceneData.scene.duration,
+        video: {
+          ...sceneData.selectedVideo,
+          videoUrl: this.pexelsService.getVideoFileUrl(sceneData.selectedVideo)
+        },
+        text: {
+          content: sceneData.scene.voiceoverText,
+          style: {
+            fontSize: 24,
+            fontFamily: 'Arial',
+            fontWeight: 'bold',
+            color: '#FFFFFF',
+            textAlign: 'center'
+          }
+        }
+      }));
+      
+      console.log(`🎬 Подготовлено ${scenesForShotstack.length} сцен для Shotstack`);
+      console.log(`📋 Первая сцена:`, JSON.stringify(scenesForShotstack[0], null, 2));
+      
+      // Загружаем аудио на Backblaze B2 и получаем публичный URL
+      let audioUrl = videoData.audio.url; // Проверяем, есть ли уже URL
+      
+      if (!audioUrl) {
+        console.log(`📤 Загружаем аудио на Backblaze B2: ${videoData.audio.filePath}`);
+        try {
+          audioUrl = await this.backblazeService.uploadFile(videoData.audio.filePath);
+          console.log(`🔗 URL аудио в Backblaze B2: ${audioUrl}`);
+          
+          // Сохраняем URL в базу данных
+          videoData.audio.url = audioUrl;
+          await this.dataService.saveVideo(videoData);
+          console.log(`💾 URL аудио сохранен в базу данных`);
+        } catch (error) {
+          console.error('❌ Ошибка загрузки аудио на Backblaze B2:', error.message);
+          throw new Error(`Ошибка загрузки аудио: ${error.message}`);
+        }
+      } else {
+        console.log(`🔗 Используем существующий URL аудио: ${audioUrl}`);
+      }
+      
+      const shotstackResult = await this.shotstackService.createVideo(
+        scenesForShotstack,
+        audioUrl, // URL аудио из Backblaze B2
+        {}
+      );
+      
+      if (!shotstackResult.success) {
+        console.log(`⚠️ Ошибка Shotstack: ${shotstackResult.error}`);
+        throw new Error(`Ошибка создания видео: ${shotstackResult.error}`);
+      }
+      
+      // Обновляем данные видео
+      videoData.video = {
+        status: 'shotstack_processing',
+        renderId: shotstackResult.renderId,
+        url: null
+      };
+      
+      videoData.pipeline.stages.videoCreation = 'completed';
+      videoData.status = 'processing';
+      
+      await this.dataService.saveVideo(videoData);
+      
+      console.log(`✅ Видео создано в Shotstack. Render ID: ${shotstackResult.renderId}`);
+      
+      return {
+        videoId: videoId,
+        video: videoData
+      };
+      
+    } catch (error) {
+      console.error('❌ Ошибка создания видео:', error.message);
+      throw error;
     }
   }
 }

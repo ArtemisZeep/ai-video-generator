@@ -63,7 +63,9 @@ class DataService {
   async getVideoById(id) {
     try {
       const videos = await this.loadVideos();
-      return videos.find(video => video.id === id);
+      // Находим последнюю запись с данным ID (самую свежую)
+      const matchingVideos = videos.filter(video => video.id === id);
+      return matchingVideos.length > 0 ? matchingVideos[matchingVideos.length - 1] : null;
     } catch (error) {
       console.error('Error getting video by ID:', error);
       return null;

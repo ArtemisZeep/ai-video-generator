@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 async function testElevenLabsDirect() {
-  const apiKey = 'sk_51b2f83ecfd251cfa0886d30158507d2c56b86ac3596660b';
+  const apiKey = 'sk_960d807393c5bdc2c1dadf73295c8b6573cee13a0f693800';
   const baseUrl = 'https://api.elevenlabs.io/v1';
   
   console.log('🧪 Тестируем ElevenLabs API напрямую...');
