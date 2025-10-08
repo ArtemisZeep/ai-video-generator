@@ -7,7 +7,7 @@ const DataService = require('./services/dataService');
 const ElevenLabsService = require('./services/elevenLabsService');
 const ShortGptService = require('./services/shortGptService');
 const PexelsService = require('./services/pexelsService');
-const CreatomateService = require('./services/creatomateService');
+const ShotstackService = require('./services/shotstackService');
 const VideoPipelineService = require('./services/videoPipelineService');
 
 const app = express();
@@ -24,7 +24,7 @@ const dataService = new DataService();
 const elevenLabsService = new ElevenLabsService();
 const shortGptService = new ShortGptService();
 const pexelsService = new PexelsService();
-const creatomateService = new CreatomateService();
+const shotstackService = new ShotstackService();
 const videoPipelineService = new VideoPipelineService();
 
 // Middleware для логирования
@@ -46,13 +46,14 @@ app.get('/', (req, res) => {
       'Создание озвучки через ElevenLabs API',
       'Поиск видео через Pexels API',
       'Умный отбор видео через Perplexity',
-      'Создание финального видео через Creatomate',
+        'Создание финального видео через Shotstack',
       'Полный автоматизированный пайплайн'
     ],
     endpoints: {
       // 🚀 НОВЫЙ УЛУЧШЕННЫЙ ПАЙПЛАЙН
       'POST /api/pipeline/generate-full-video': '🚀 НОВЫЙ: Полный улучшенный пайплайн',
       'GET /api/pipeline/status/:videoId': 'Статус видео в пайплайне',
+      'POST /api/pipeline/continue/:videoId': 'Продолжить пайплайн с существующим видео',
       'POST /api/pipeline/check-services': 'Проверка доступности всех сервисов',
       
       // Perplexity API
@@ -63,8 +64,10 @@ app.get('/', (req, res) => {
       'POST /api/pexels/search': 'Поиск вертикальных видео в Pexels',
       
       // Creatomate API
-      'POST /api/creatomate/create-render': 'Создание рендера в Creatomate',
-      'GET /api/creatomate/render-status/:renderId': 'Статус рендера в Creatomate',
+      'POST /api/shotstack/create-render': 'Создание рендера в Shotstack',
+      'GET /api/shotstack/render-status/:renderId': 'Статус рендера в Shotstack',
+      'POST /api/shotstack/create-template': 'Создание шаблона в Shotstack',
+      'POST /api/shotstack/render-template': 'Рендеринг шаблона в Shotstack',
       
       // Старые endpoints (для совместимости)
       'POST /api/generate': 'Генерация контента для видео (старый метод)',
@@ -123,7 +126,7 @@ app.get('/', (req, res) => {
         '2. Поиск видео для каждой сцены через Pexels',
         '3. Умный отбор лучших видео через Perplexity',
         '4. Генерация аудио через ElevenLabs',
-        '5. Создание финального видео через Creatomate'
+        '5. Создание финального видео через Shotstack'
       ],
       benefits: [
         'Автоматический поиск релевантных видео',
@@ -896,6 +899,28 @@ app.post('/api/pipeline/check-services', async (req, res) => {
   }
 });
 
+// POST /api/pipeline/continue/:videoId - Продолжить пайплайн с существующим видео
+app.post('/api/pipeline/continue/:videoId', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    
+    const result = await videoPipelineService.continueVideoPipeline(videoId);
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('Error continuing pipeline:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
 // POST /api/pexels/search - Поиск видео в Pexels
 app.post('/api/pexels/search', async (req, res) => {
   try {
@@ -953,6 +978,97 @@ app.get('/api/creatomate/render-status/:renderId', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error getting render status:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+// ==================== SHOTSTACK ENDPOINTS ====================
+
+// POST /api/shotstack/create-render - Создание рендера в Shotstack
+app.post('/api/shotstack/create-render', async (req, res) => {
+  try {
+    const { timeline, output } = req.body;
+
+    if (!timeline) {
+      return res.status(400).json({
+        error: 'timeline обязателен',
+        status: 'error'
+      });
+    }
+
+    const result = await shotstackService.createRender(timeline, output);
+    res.json(result);
+  } catch (error) {
+    console.error('Error creating Shotstack render:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+// GET /api/shotstack/render-status/:renderId - Статус рендера в Shotstack
+app.get('/api/shotstack/render-status/:renderId', async (req, res) => {
+  try {
+    const { renderId } = req.params;
+    
+    const result = await shotstackService.getRenderStatus(renderId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting Shotstack render status:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+// POST /api/shotstack/create-template - Создание шаблона в Shotstack
+app.post('/api/shotstack/create-template', async (req, res) => {
+  try {
+    const { name, timeline, output } = req.body;
+
+    if (!name || !timeline) {
+      return res.status(400).json({
+        error: 'name и timeline обязательны',
+        status: 'error'
+      });
+    }
+
+    const result = await shotstackService.createTemplate(name, timeline, output);
+    res.json(result);
+  } catch (error) {
+    console.error('Error creating Shotstack template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+});
+
+// POST /api/shotstack/render-template - Рендеринг шаблона в Shotstack
+app.post('/api/shotstack/render-template', async (req, res) => {
+  try {
+    const { templateId, merge } = req.body;
+
+    if (!templateId) {
+      return res.status(400).json({
+        error: 'templateId обязателен',
+        status: 'error'
+      });
+    }
+
+    const result = await shotstackService.renderTemplate(templateId, merge);
+    res.json(result);
+  } catch (error) {
+    console.error('Error rendering Shotstack template:', error);
     res.status(500).json({
       success: false,
       error: error.message,

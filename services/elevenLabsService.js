@@ -39,6 +39,11 @@ class ElevenLabsService {
     return key;
   }
 
+  // ИСПРАВЛЕНИЕ: Добавлен отсутствующий метод getCurrentApiKey
+  getCurrentApiKey() {
+    return this.apiKeys[this.currentKeyIndex];
+  }
+
   async getVoices() {
     try {
       const apiKey = this.getNextApiKey();
@@ -216,6 +221,7 @@ class ElevenLabsService {
     }
   }
 
+  // ИСПРАВЛЕНИЕ: Улучшена обработка ошибок в методе generateAndSaveVoiceover
   async generateAndSaveVoiceover(voiceoverText, videoId, language = 'ru') {
     try {
       // Генерируем озвучку
@@ -228,17 +234,26 @@ class ElevenLabsService {
       // Сохраняем аудио файл
       const filePath = await this.saveAudioFile(voiceoverData.audioBuffer, filename);
       
-      return {
-        ...voiceoverData,
+      // ИСПРАВЛЕНИЕ: Возвращаем объект с четкой структурой
+      const result = {
+        audioBuffer: voiceoverData.audioBuffer,
+        voiceId: voiceoverData.voiceId,
+        originalText: voiceoverData.originalText,
+        enhancedText: voiceoverData.enhancedText,
+        language: voiceoverData.language,
         filename: filename,
         filePath: filePath,
         fileSize: voiceoverData.audioBuffer.length,
         generatedAt: new Date().toISOString()
       };
 
+      console.log('✅ Озвучка успешно создана и сохранена');
+      return result;
+
     } catch (error) {
-      console.error('Error generating and saving voiceover:', error);
-      throw error;
+      console.error('❌ Ошибка генерации и сохранения озвучки:', error.message);
+      // ИСПРАВЛЕНИЕ: Пробрасываем ошибку дальше, чтобы caller мог ее обработать
+      throw new Error(`Ошибка генерации озвучки: ${error.message}`);
     }
   }
 
@@ -247,7 +262,7 @@ class ElevenLabsService {
       // Простой тестовый запрос для проверки доступности API
       const response = await axios.get(`${this.baseUrl}/voices`, {
         headers: {
-          'xi-api-key': this.getCurrentApiKey()
+          'xi-api-key': this.getCurrentApiKey() // ИСПРАВЛЕНИЕ: Используем getCurrentApiKey вместо несуществующего метода
         },
         httpsAgent: this.proxyAgent,
         httpAgent: this.proxyAgent,
@@ -255,7 +270,7 @@ class ElevenLabsService {
       });
       
       console.log(`✅ ElevenLabs API доступен. Статус: ${response.status}`);
-      return response.status === 200;
+      return true;
     } catch (error) {
       console.error('❌ ElevenLabs API недоступен:', error.message);
       return false;

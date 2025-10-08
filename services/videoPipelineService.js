@@ -1,7 +1,7 @@
 const PerplexityService = require('./perplexityService');
 const ElevenLabsService = require('./elevenLabsService');
 const PexelsService = require('./pexelsService');
-const CreatomateService = require('./creatomateService');
+const ShotstackService = require('./shotstackService');
 const DataService = require('./dataService');
 const fs = require('fs-extra');
 const path = require('path');
@@ -11,7 +11,7 @@ class VideoPipelineService {
     this.perplexityService = new PerplexityService();
     this.elevenLabsService = new ElevenLabsService();
     this.pexelsService = new PexelsService();
-    this.creatomateService = new CreatomateService();
+    this.shotstackService = new ShotstackService();
     this.dataService = new DataService();
   }
 
@@ -24,6 +24,25 @@ class VideoPipelineService {
     console.log(`📝 Тема: ${topic}`);
     console.log(`🌍 Язык: ${language}`);
     console.log(`🆔 ID видео: ${videoId}`);
+
+    // Создаем базовую запись в базе данных
+    let videoData = {
+      id: videoId,
+      topic: topic,
+      language: language,
+      status: 'started',
+      pipeline: {
+        totalDuration: 0,
+        stages: {
+          scriptGeneration: 'pending',
+          videoSearch: 'pending',
+          videoSelection: 'pending',
+          audioGeneration: 'pending',
+          videoCreation: 'pending'
+        }
+      },
+      createdAt: new Date().toISOString()
+    };
 
     try {
       // Этап 1: Генерация детального сценария
@@ -38,6 +57,14 @@ class VideoPipelineService {
       console.log(`✅ Сценарий создан: ${script.title}`);
       console.log(`📊 Количество сцен: ${script.scenes.length}`);
 
+      // Сохраняем результат этапа 1
+      videoData.script = script;
+      videoData.title = script.title;
+      videoData.description = script.description;
+      videoData.pipeline.stages.scriptGeneration = 'completed';
+      await this.dataService.saveVideo(videoData);
+      console.log(`💾 Результат этапа 1 сохранен в базу данных`);
+
       // Этап 2: Поиск видео для каждой сцены
       console.log(`\n🎬 ЭТАП 2: Поиск видео через Pexels`);
       const videoSearchResult = await this.pexelsService.searchVideosForScenes(script.scenes, language);
@@ -47,6 +74,12 @@ class VideoPipelineService {
       }
 
       console.log(`✅ Найдены видео для всех сцен`);
+
+      // Сохраняем результат этапа 2
+      videoData.videoSearchResults = videoSearchResult.results;
+      videoData.pipeline.stages.videoSearch = 'completed';
+      await this.dataService.saveVideo(videoData);
+      console.log(`💾 Результат этапа 2 сохранен в базу данных`);
 
       // Этап 3: Умный отбор лучших видео
       console.log(`\n🎯 ЭТАП 3: Умный отбор видео через Perplexity`);
@@ -90,27 +123,45 @@ class VideoPipelineService {
         }
       }
 
+      // Сохраняем результат этапа 3
+      videoData.selectedVideos = selectedVideos;
+      videoData.pipeline.stages.videoSelection = 'completed';
+      await this.dataService.saveVideo(videoData);
+      console.log(`💾 Результат этапа 3 сохранен в базу данных`);
+
       // Этап 4: Генерация аудио
-      console.log(`\n🎵 ЭТАП 4: Генерация аудио через ElevenLabs`);
-      const fullVoiceoverText = script.scenes.map(scene => scene.voiceoverText).join(' ');
+console.log(`\n🎵 ЭТАП 4: Генерация аудио через ElevenLabs`);
+const fullVoiceoverText = script.scenes.map(scene => scene.voiceoverText).join(' ');
+
+let audioResult;
+try {
+  audioResult = await this.elevenLabsService.generateAndSaveVoiceover(
+    fullVoiceoverText,
+    videoId,
+    language
+  );
+  console.log(`✅ Аудио создано: ${audioResult.filename}`);
+} catch (error) {
+  throw new Error(`Ошибка генерации аудио: ${error.message}`);
+}
+
+// Сохраняем результат этапа 4
+videoData.audio = {
+  filename: audioResult.filename,
+  filePath: audioResult.filePath,
+  fileSize: audioResult.fileSize,
+  generatedAt: audioResult.generatedAt
+};
+videoData.pipeline.stages.audioGeneration = 'completed';
+await this.dataService.saveVideo(videoData);
+console.log(`💾 Результат этапа 4 сохранен в базу данных`);
+
+
+      // Этап 5: Создание видео через Shotstack
+      console.log(`\n🎬 ЭТАП 5: Создание финального видео через Shotstack`);
       
-      const audioResult = await this.elevenLabsService.generateAndSaveVoiceover(
-        fullVoiceoverText,
-        videoId,
-        language
-      );
-
-      if (!audioResult.success) {
-        throw new Error(`Ошибка генерации аудио: ${audioResult.error}`);
-      }
-
-      console.log(`✅ Аудио создано: ${audioResult.filename}`);
-
-      // Этап 5: Создание видео через Creatomate
-      console.log(`\n🎬 ЭТАП 5: Создание финального видео через Creatomate`);
-      
-      // Подготавливаем данные для Creatomate
-      const scenesForCreatomate = selectedVideos.map(sceneData => ({
+      // Подготавливаем данные для Shotstack
+      const scenesForShotstack = selectedVideos.map(sceneData => ({
         scene: sceneData.scene,
         selectedVideo: {
           ...sceneData.selectedVideo,
@@ -118,62 +169,61 @@ class VideoPipelineService {
         }
       }));
 
-      const creatomateResult = await this.creatomateService.createVideo(
-        scenesForCreatomate,
+      const shotstackResult = await this.shotstackService.createVideo(
+        scenesForShotstack,
         audioResult.filePath, // Путь к аудио файлу
-        options.templateId
+        options
       );
 
-      if (!creatomateResult.success) {
-        throw new Error(`Ошибка создания видео в Creatomate: ${creatomateResult.error}`);
+      if (!shotstackResult.success) {
+        console.log(`⚠️ Ошибка Shotstack: ${shotstackResult.error}`);
+        console.log(`📝 Сохраняем видео без финального рендера`);
+        
+        // Сохраняем как частично завершенное видео
+        videoData.status = 'partial_complete';
+        videoData.video = {
+          error: shotstackResult.error,
+          status: 'shotstack_failed'
+        };
+        videoData.pipeline.stages.videoCreation = 'failed';
+        videoData.pipeline.totalDuration = Date.now() - startTime;
+        await this.dataService.saveVideo(videoData);
+        
+        return {
+          success: true,
+          videoId: videoId,
+          videoData: videoData,
+          videoUrl: null,
+          audioUrl: audioResult.filePath,
+          duration: Date.now() - startTime,
+          warning: 'Видео создано без финального рендера из-за ошибки Shotstack'
+        };
       }
 
-      console.log(`✅ Финальное видео создано: ${creatomateResult.url}`);
+      console.log(`✅ Финальное видео создано: ${shotstackResult.url}`);
 
-      // Сохраняем результат в базу данных
-      const videoData = {
-        id: videoId,
-        topic: topic,
-        language: language,
-        title: script.title,
-        description: script.description,
-        script: script,
-        scenes: selectedVideos,
-        audio: {
-          filename: audioResult.filename,
-          filePath: audioResult.filePath,
-          fileSize: audioResult.fileSize,
-          generatedAt: audioResult.generatedAt
-        },
-        video: {
-          url: creatomateResult.url,
-          status: creatomateResult.status,
-          createdAt: creatomateResult.createdAt
-        },
-        pipeline: {
-          totalDuration: Date.now() - startTime,
-          stages: {
-            scriptGeneration: 'completed',
-            videoSearch: 'completed',
-            videoSelection: 'completed',
-            audioGeneration: 'completed',
-            videoCreation: 'completed'
-          }
-        },
-        createdAt: new Date().toISOString()
+      // Обновляем финальные данные
+      videoData.video = {
+        url: shotstackResult.url,
+        status: shotstackResult.status,
+        createdAt: shotstackResult.createdAt
       };
+      videoData.status = 'completed';
+      videoData.pipeline.stages.videoCreation = 'completed';
+      videoData.pipeline.totalDuration = Date.now() - startTime;
 
       await this.dataService.saveVideo(videoData);
+      console.log(`💾 Финальный результат сохранен в базу данных`);
 
       console.log(`\n🎉 ПАЙПЛАЙН ЗАВЕРШЕН УСПЕШНО!`);
       console.log(`⏱️ Общее время: ${Math.round((Date.now() - startTime) / 1000)} секунд`);
-      console.log(`🎬 Видео: ${creatomateResult.url}`);
+      console.log(`🎬 Видео: ${shotstackResult.url}`);
 
       return {
         success: true,
         videoId: videoId,
         videoData: videoData,
-        videoUrl: creatomateResult.url,
+        videoUrl: shotstackResult.url,
         audioUrl: audioResult.filePath,
         duration: Date.now() - startTime
       };
@@ -181,31 +231,34 @@ class VideoPipelineService {
     } catch (error) {
       console.error(`❌ Ошибка в пайплайне: ${error.message}`);
       
-      // Сохраняем ошибку в базу данных
-      const errorData = {
-        id: videoId,
-        topic: topic,
-        language: language,
-        error: error.message,
-        pipeline: {
-          totalDuration: Date.now() - startTime,
-          stages: {
-            scriptGeneration: 'failed',
-            videoSearch: 'failed',
-            videoSelection: 'failed',
-            audioGeneration: 'failed',
-            videoCreation: 'failed'
-          }
-        },
-        createdAt: new Date().toISOString()
-      };
+      // Обновляем существующие данные с ошибкой
+      videoData.status = 'failed';
+      videoData.error = error.message;
+      videoData.pipeline.totalDuration = Date.now() - startTime;
+      
+      // Определяем на каком этапе произошла ошибка
+      if (videoData.pipeline.stages.scriptGeneration === 'completed' && 
+          videoData.pipeline.stages.videoSearch === 'pending') {
+        videoData.pipeline.stages.videoSearch = 'failed';
+      } else if (videoData.pipeline.stages.videoSearch === 'completed' && 
+                 videoData.pipeline.stages.videoSelection === 'pending') {
+        videoData.pipeline.stages.videoSelection = 'failed';
+      } else if (videoData.pipeline.stages.videoSelection === 'completed' && 
+                 videoData.pipeline.stages.audioGeneration === 'pending') {
+        videoData.pipeline.stages.audioGeneration = 'failed';
+      } else if (videoData.pipeline.stages.audioGeneration === 'completed' && 
+                 videoData.pipeline.stages.videoCreation === 'pending') {
+        videoData.pipeline.stages.videoCreation = 'failed';
+      }
 
-      await this.dataService.saveVideo(errorData);
+      await this.dataService.saveVideo(videoData);
+      console.log(`💾 Ошибка сохранена в базу данных`);
 
       return {
         success: false,
         error: error.message,
-        videoId: videoId
+        videoId: videoId,
+        videoData: videoData
       };
     }
   }
@@ -223,7 +276,7 @@ class VideoPipelineService {
       perplexity: await this.perplexityService.checkAvailability(),
       elevenlabs: await this.elevenLabsService.checkAvailability(),
       pexels: await this.pexelsService.checkAvailability(),
-      creatomate: await this.creatomateService.checkAvailability()
+      shotstack: await this.shotstackService.checkAvailability()
     };
 
     const allAvailable = Object.values(checks).every(status => status === true);
@@ -232,12 +285,239 @@ class VideoPipelineService {
     console.log(`  Perplexity: ${checks.perplexity ? '✅' : '❌'}`);
     console.log(`  ElevenLabs: ${checks.elevenlabs ? '✅' : '❌'}`);
     console.log(`  Pexels: ${checks.pexels ? '✅' : '❌'}`);
-    console.log(`  Creatomate: ${checks.creatomate ? '✅' : '❌'}`);
+    console.log(`  Shotstack: ${checks.shotstack ? '✅' : '❌'}`);
     
     return {
       allAvailable,
       services: checks
     };
+  }
+
+  // Продолжить пайплайн с существующим видео
+  async continueVideoPipeline(videoId) {
+    try {
+      const video = await this.dataService.getVideoById(videoId);
+      
+      if (!video) {
+        return {
+          success: false,
+          error: 'Видео не найдено'
+        };
+      }
+
+      console.log(`🔄 Продолжаем пайплайн для видео: ${videoId}`);
+      console.log(`📝 Тема: ${video.topic}`);
+      console.log(`🌍 Язык: ${video.language}`);
+
+      const startTime = Date.now();
+      let videoData = video;
+
+      // Проверяем, на каком этапе остановились
+      const stages = video.pipeline?.stages || {};
+      
+      try {
+        // Этап 2: Поиск видео (если не завершен)
+        if (stages.videoSearch !== 'completed') {
+          console.log(`\n🎬 ЭТАП 2: Поиск видео через Pexels`);
+          const videoSearchResult = await this.pexelsService.searchVideosForScenes(video.script.scenes, video.language);
+          
+          if (!videoSearchResult.success) {
+            throw new Error(`Ошибка поиска видео: ${videoSearchResult.error}`);
+          }
+
+          console.log(`✅ Найдены видео для всех сцен`);
+
+          // Сохраняем результат этапа 2
+          videoData.videoSearchResults = videoSearchResult.results;
+          videoData.pipeline.stages.videoSearch = 'completed';
+          await this.dataService.saveVideo(videoData);
+          console.log(`💾 Результат этапа 2 сохранен в базу данных`);
+        }
+
+        // Этап 3: Умный отбор видео (если не завершен)
+        if (stages.videoSelection !== 'completed') {
+          console.log(`\n🎯 ЭТАП 3: Умный отбор видео через Perplexity`);
+          const selectedVideos = [];
+          
+          for (let i = 0; i < videoData.videoSearchResults.length; i++) {
+            const sceneData = videoData.videoSearchResults[i];
+            const scene = sceneData.scene;
+            const videoOptions = sceneData.videos;
+            
+            if (videoOptions.length === 0) {
+              console.log(`⚠️ Нет видео для сцены ${i + 1}, пропускаем`);
+              continue;
+            }
+
+            // Добавляем ключевое слово поиска к каждому видео
+            const videosWithKeywords = videoOptions.map(video => ({
+              ...video,
+              searchKeyword: sceneData.searchKeywords[0]
+            }));
+
+            const selectionResult = await this.perplexityService.selectBestVideo(scene, videosWithKeywords);
+            
+            if (selectionResult.success) {
+              selectedVideos.push({
+                scene: scene,
+                selectedVideo: selectionResult.selectedVideo,
+                reasoning: selectionResult.reasoning,
+                allOptions: selectionResult.allOptions
+              });
+              console.log(`✅ Выбрано видео для сцены ${i + 1}: ${selectionResult.selectedVideo.id}`);
+            } else {
+              // Fallback на первое видео
+              selectedVideos.push({
+                scene: scene,
+                selectedVideo: videosWithKeywords[0],
+                reasoning: 'Fallback на первое доступное видео',
+                allOptions: videosWithKeywords
+              });
+              console.log(`⚠️ Fallback на первое видео для сцены ${i + 1}`);
+            }
+          }
+
+          // Сохраняем результат этапа 3
+          videoData.selectedVideos = selectedVideos;
+          videoData.pipeline.stages.videoSelection = 'completed';
+          await this.dataService.saveVideo(videoData);
+          console.log(`💾 Результат этапа 3 сохранен в базу данных`);
+        }
+
+        // Этап 4: Генерация аудио (если не завершен)
+        if (stages.audioGeneration !== 'completed') {
+          console.log(`\n🎵 ЭТАП 4: Генерация аудио через ElevenLabs`);
+          const fullVoiceoverText = video.script.scenes.map(scene => scene.voiceoverText).join(' ');
+
+          let audioResult;
+          try {
+            audioResult = await this.elevenLabsService.generateAndSaveVoiceover(
+              fullVoiceoverText,
+              videoId,
+              video.language
+            );
+            console.log(`✅ Аудио создано: ${audioResult.filename}`);
+          } catch (error) {
+            throw new Error(`Ошибка генерации аудио: ${error.message}`);
+          }
+
+          // Сохраняем результат этапа 4
+          videoData.audio = {
+            filename: audioResult.filename,
+            filePath: audioResult.filePath,
+            fileSize: audioResult.fileSize,
+            generatedAt: audioResult.generatedAt
+          };
+          videoData.pipeline.stages.audioGeneration = 'completed';
+          await this.dataService.saveVideo(videoData);
+          console.log(`💾 Результат этапа 4 сохранен в базу данных`);
+        }
+
+        // Этап 5: Создание видео через Shotstack (если не завершен)
+        if (stages.videoCreation !== 'completed') {
+          console.log(`\n🎬 ЭТАП 5: Создание финального видео через Shotstack`);
+          
+          // Подготавливаем данные для Shotstack
+          const scenesForShotstack = videoData.selectedVideos.map(sceneData => ({
+            scene: sceneData.scene,
+            selectedVideo: {
+              ...sceneData.selectedVideo,
+              videoUrl: this.pexelsService.getVideoFileUrl(sceneData.selectedVideo)
+            }
+          }));
+
+          const shotstackResult = await this.shotstackService.createVideo(
+            scenesForShotstack,
+            videoData.audio.filePath,
+            {}
+          );
+
+          if (!shotstackResult.success) {
+            console.log(`⚠️ Ошибка Shotstack: ${shotstackResult.error}`);
+            console.log(`📝 Сохраняем видео без финального рендера`);
+            
+            // Сохраняем как частично завершенное видео
+            videoData.status = 'partial_complete';
+            videoData.video = {
+              error: shotstackResult.error,
+              status: 'shotstack_failed'
+            };
+            videoData.pipeline.stages.videoCreation = 'failed';
+            videoData.pipeline.totalDuration = Date.now() - startTime;
+            await this.dataService.saveVideo(videoData);
+            
+            return {
+              success: true,
+              videoId: videoId,
+              videoData: videoData,
+              videoUrl: null,
+              audioUrl: videoData.audio.filePath,
+              duration: Date.now() - startTime,
+              warning: 'Видео создано без финального рендера из-за ошибки Shotstack'
+            };
+          }
+
+          console.log(`✅ Финальное видео создано: ${shotstackResult.url}`);
+
+          // Обновляем финальные данные
+          videoData.video = {
+            url: shotstackResult.url,
+            status: shotstackResult.status,
+            createdAt: shotstackResult.createdAt
+          };
+          videoData.status = 'completed';
+          videoData.pipeline.stages.videoCreation = 'completed';
+          videoData.pipeline.totalDuration = Date.now() - startTime;
+
+          await this.dataService.saveVideo(videoData);
+          console.log(`💾 Финальный результат сохранен в базу данных`);
+
+          console.log(`\n🎉 ПАЙПЛАЙН ЗАВЕРШЕН УСПЕШНО!`);
+          console.log(`⏱️ Общее время: ${Math.round((Date.now() - startTime) / 1000)} секунд`);
+          console.log(`🎬 Видео: ${shotstackResult.url}`);
+
+          return {
+            success: true,
+            videoId: videoId,
+            videoData: videoData,
+            videoUrl: shotstackResult.url,
+            audioUrl: videoData.audio.filePath,
+            duration: Date.now() - startTime
+          };
+        }
+
+        return {
+          success: true,
+          videoId: videoId,
+          videoData: videoData,
+          message: 'Пайплайн уже завершен'
+        };
+
+      } catch (error) {
+        console.error(`❌ Ошибка в пайплайне: ${error.message}`);
+        
+        // Обновляем существующие данные с ошибкой
+        videoData.status = 'failed';
+        videoData.error = error.message;
+        videoData.pipeline.totalDuration = Date.now() - startTime;
+        
+        await this.dataService.saveVideo(videoData);
+        console.log(`💾 Ошибка сохранена в базу данных`);
+
+        return {
+          success: false,
+          error: error.message,
+          videoId: videoId,
+          videoData: videoData
+        };
+      }
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
   }
 
   // Получить статус видео по ID

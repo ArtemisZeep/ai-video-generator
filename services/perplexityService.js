@@ -27,6 +27,7 @@ class PerplexityService {
 
   getNextApiKey() {
     const key = this.apiKeys[this.currentKeyIndex];
+    console.log(`🔑 Используем Perplexity API ключ: ${key.substring(0, 20)}...`);
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
     return key;
   }
@@ -59,7 +60,7 @@ class PerplexityService {
         const response = await axios.post(
           'https://api.perplexity.ai/chat/completions',
           {
-            model: 'sonar-reasoning-pro',
+            model: 'sonar',
             messages: [
               {
                 role: 'system',
@@ -326,6 +327,44 @@ ${index + 1}. ID: ${video.id}
         error: error.message,
         selectedVideo: videoOptions[0] // Fallback на первое видео
       };
+    }
+  }
+
+  // Получение синонимов и переводов для улучшения поиска видео
+  async getSearchSynonyms(keywords, language = 'ru') {
+    try {
+      const prompt = `Для поиска видео в Pexels мне нужны синонимы и переводы следующих ключевых слов: ${keywords.join(', ')}.
+
+Язык контента: ${language}
+
+Пожалуйста, предоставь:
+1. Переводы на английский язык
+2. Синонимы на английском языке
+3. Связанные термины на английском языке
+4. Более общие термины на английском языке
+
+Формат ответа (только список слов через запятую, без объяснений):
+word1, word2, word3, word4, word5`;
+
+      const response = await this.makeRequest(prompt);
+      
+      if (response.success) {
+        // Парсим ответ и извлекаем слова
+        const content = response.content.toLowerCase();
+        const words = content
+          .split(/[,\n\r]+/)
+          .map(word => word.trim())
+          .filter(word => word.length > 2 && word.length < 20)
+          .slice(0, 8); // Ограничиваем до 8 слов
+        
+        console.log(`🔍 Perplexity предложил синонимы: ${words.join(', ')}`);
+        return words;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('❌ Ошибка получения синонимов:', error.message);
+      return [];
     }
   }
 

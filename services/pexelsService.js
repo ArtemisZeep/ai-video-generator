@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs-extra');
 const path = require('path');
+const PerplexityService = require('./perplexityService');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 class PexelsService {
@@ -8,6 +9,7 @@ class PexelsService {
     this.apiKeys = this.loadApiKeys();
     this.currentKeyIndex = 0;
     this.baseUrl = 'https://api.pexels.com/videos';
+    this.perplexityService = new PerplexityService();
     
     // Настройка прокси
     const proxyUrl = 'http://b5Cb94Vedc:uN3LHuCUjZ@45.150.35.132:37199';
@@ -106,6 +108,18 @@ class PexelsService {
   }
   
 
+  // Получение синонимов через Perplexity для улучшения поиска
+  async getSynonyms(keywords, language) {
+    try {
+      console.log(`🤖 Запрашиваем синонимы у Perplexity для: ${keywords.join(', ')}`);
+      const synonyms = await this.perplexityService.getSearchSynonyms(keywords, language);
+      return synonyms;
+    } catch (error) {
+      console.error('❌ Ошибка получения синонимов:', error.message);
+      return [];
+    }
+  }
+
   async searchVideosForScenes(scenes, language = 'en') {
     console.log(`🎬 Ищем видео для ${scenes.length} сцен (язык: ${language})`);
     
@@ -140,8 +154,8 @@ class PexelsService {
         });
         
         // Если результатов мало и язык не английский, пробуем английский
-        if ((!searchResult.success || searchResult.videos.length < 5) && locale !== 'en-US') {
-          console.log(`⚠️ Мало результатов для "${keyword}" на ${locale}, пробуем английский`);
+        if ((!searchResult.success || searchResult.videos.length < 20) && locale !== 'en-US') {
+          console.log(`⚠️ Мало результатов для "${keyword}" на ${locale} (${searchResult.videos?.length || 0}), пробуем английский`);
           searchResult = await this.searchVideos(keyword, {
             orientation: 'portrait',
             per_page: 80,
@@ -166,9 +180,71 @@ class PexelsService {
           }
         }
         
+        // Если все еще мало результатов, попробуем синонимы через Perplexity
+        if (bestResults.length < 10 && locale !== 'en-US') {
+          const synonyms = await this.getSynonyms([keyword], language);
+          for (const synonym of synonyms.slice(0, 3)) { // Ограничиваем до 3 синонимов
+            console.log(`🔄 Пробуем синоним от Perplexity: "${synonym}"`);
+            const synonymResult = await this.searchVideos(synonym, {
+              orientation: 'portrait',
+              per_page: 80,
+              min_duration: 3,
+              max_duration: 20,
+              locale: 'en-US'
+            });
+            
+            if (synonymResult.success && synonymResult.videos.length > 0) {
+              const verticalVideos = synonymResult.videos.filter(video => {
+                const aspectRatio = video.width / video.height;
+                return aspectRatio >= 0.51 && aspectRatio <= 0.61;
+              });
+              
+              if (verticalVideos.length > 0) {
+                bestResults = [...bestResults, ...verticalVideos];
+                console.log(`✅ Синоним "${synonym}": ${verticalVideos.length} вертикальных видео`);
+                if (bestResults.length >= 20) break; // Достаточно результатов
+              }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500)); // Задержка между запросами
+          }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       
+      // Если все еще мало результатов, попробуем получить синонимы для всех ключевых слов
+      if (bestResults.length < 10) {
+        console.log(`🔄 Мало результатов (${bestResults.length}), запрашиваем синонимы для всех ключевых слов`);
+        const allSynonyms = await this.getSynonyms(scene.searchKeywords, language);
+        
+        for (const synonym of allSynonyms.slice(0, 5)) { // Ограничиваем до 5 синонимов
+          console.log(`🔄 Пробуем общий синоним: "${synonym}"`);
+          const synonymResult = await this.searchVideos(synonym, {
+            orientation: 'portrait',
+            per_page: 80,
+            min_duration: 3,
+            max_duration: 20,
+            locale: 'en-US'
+          });
+          
+          if (synonymResult.success && synonymResult.videos.length > 0) {
+            const verticalVideos = synonymResult.videos.filter(video => {
+              const aspectRatio = video.width / video.height;
+              return aspectRatio >= 0.51 && aspectRatio <= 0.61;
+            });
+            
+            if (verticalVideos.length > 0) {
+              bestResults = [...bestResults, ...verticalVideos];
+              console.log(`✅ Общий синоним "${synonym}": ${verticalVideos.length} вертикальных видео`);
+              if (bestResults.length >= 20) break; // Достаточно результатов
+            }
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
       results.push({
         sceneIndex: i,
         scene: scene,
