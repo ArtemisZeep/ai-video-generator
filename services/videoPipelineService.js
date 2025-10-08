@@ -169,9 +169,16 @@ console.log(`💾 Результат этапа 4 сохранен в базу �
         }
       }));
 
+      // Создаем публичный URL для аудио файла
+      const audioFileName = path.basename(audioResult.filePath);
+      const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+      const audioPublicUrl = `${baseUrl}/audio/${audioFileName}`;
+      
+      console.log(`🔗 Публичный URL аудио: ${audioPublicUrl}`);
+      
       const shotstackResult = await this.shotstackService.createVideo(
         scenesForShotstack,
-        audioResult.filePath, // Путь к аудио файлу
+        audioPublicUrl, // Публичный URL аудио файла
         options
       );
 
@@ -426,9 +433,16 @@ console.log(`💾 Результат этапа 4 сохранен в базу �
             }
           }));
 
+          // Создаем публичный URL для аудио файла
+          const audioFileName = path.basename(videoData.audio.filePath);
+          const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+          const audioPublicUrl = `${baseUrl}/audio/${audioFileName}`;
+          
+          console.log(`🔗 Публичный URL аудио: ${audioPublicUrl}`);
+          
           const shotstackResult = await this.shotstackService.createVideo(
             scenesForShotstack,
-            videoData.audio.filePath,
+            audioPublicUrl, // Публичный URL аудио файла
             {}
           );
 

@@ -18,6 +18,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Статический сервер для аудио файлов
+app.use('/audio', express.static(path.join(__dirname, 'data/audio')));
+
 // Инициализация сервисов
 const perplexityService = new PerplexityService();
 const dataService = new DataService();
